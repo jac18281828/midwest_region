@@ -82,8 +82,10 @@ gmt begin "${WORK}/midwest" ps
     echo "${MARK_LON} ${MARK_LAT}" | gmt plot ${REGION} ${PROJ} -Sc${B_IN}  -Gblack
 gmt end
 
-# Convert to a transparent, cropped, 300 dpi PNG.
+# Transparent, cropped, 300 dpi PNG (raster) ...
 gmt psconvert "${WORK}/midwest.ps" -TG -A -E300 -D"${OUT}" -Fmidwest
+# ... and a cropped vector PDF (scalable; convert to SVG with e.g. pdf2svg/Inkscape).
+gmt psconvert "${WORK}/midwest.ps" -Tf -A -D"${OUT}" -Fmidwest
 
-echo "Wrote ${OUT}/midwest.png"
-ls -l "${OUT}/midwest.png"
+echo "Wrote ${OUT}/midwest.png and ${OUT}/midwest.pdf"
+ls -l "${OUT}/midwest.png" "${OUT}/midwest.pdf"
