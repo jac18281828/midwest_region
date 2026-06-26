@@ -21,4 +21,10 @@ jobs:
       - name: Install dependencies
         run: npm install -g @commitlint/{cli,config-conventional}
       - name: Validate all commits from PR
-        run: npx commitlint --from HEAD~${{ github.event.pull_request.commits || 1 }} --to HEAD --verbose
+        run: |
+          N=${{ github.event.pull_request.commits || 1 }}
+          if git rev-parse HEAD~${N} >/dev/null 2>&1; then
+            npx commitlint --from HEAD~${N} --to HEAD --verbose
+          else
+            npx commitlint --last ${N} --verbose
+          fi
