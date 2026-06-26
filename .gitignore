@@ -6,3 +6,4 @@ gmt.conf
 *.swp
 *.swo
 *~
+PROMPT*.md
