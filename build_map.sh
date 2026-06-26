@@ -18,50 +18,71 @@ PROJ="-JM25c"
 # Mercyhealth Sportscore Two, Loves Park, IL (Google place pin: lon lat).
 MARK_LON=-88.9445
 MARK_LAT=42.3220
-DOT=0.4c            # circle diameter; drop to 0.3c only if it touches Wisconsin.
 
 # Cartography knobs.
-RES=l              # GSHHG/WDBII resolution: l=low (smooth), i=intermediate.
+RES=i              # GSHHG/WDBII resolution: i=intermediate (atlas-quality, smooth).
 AREA=5000          # drop water bodies < this many km^2 (keeps only Great Lakes).
-PEN=2p,black       # border / shoreline pen.
+TOL=6k             # border generalization (Douglas-Peucker). LIGHT on purpose:
+                   # it strips river noise but leaves straight political borders
+                   # as clean 2-point lines (which the spline keeps straight).
+SPLINE=2k          # Akima spline resample step. Rounds the remaining river
+                   # chords into smooth flowing curves (kills the "cartoonish"
+                   # faceting) without rounding the sharp state corners.
+BUF=0.18           # clip-mask dilation (deg). Must exceed the border deviation so
+                   # the perimeter renders at full pen width (not clipped to half).
+PEN=2.4p,black     # state / national border pen (solid, professional weight).
+LAKEPEN=1.2p,black # Great Lakes shoreline pen (thin -> outlines the water).
+LAKEFILL="#d9d9d9" # Great Lakes water fill (~15% grey) for land/water separation.
 
-# --- 1. DCW polygons of the 13 states -> clip mask ----------------------------
-# Dump the state polygons as a multisegment table. We do NOT plot these (their
-# edges are *political*, so they run down the middle of the Great Lakes); we use
-# them only to mask the GSHHG/WDBII linework below to the 13 states.
+# Golden three-ring bullseye venue marker (diameters in ~phi progression), so the
+# location reads as a deliberate target instead of an "owl eye" or a drowned dot.
+B_OUT=1.25c        # outer ring diameter.
+B_MID=0.77c        # middle ring diameter (~ B_OUT / phi).
+B_IN=0.28c         # inner filled dot diameter.
+RINGPEN=1.8p,black # ring pen (a touch lighter than borders, reads as a marker).
+
+# --- 1. DCW polygons of the 13 states -> dilated clip mask --------------------
+# Dump the state polygons (never drawn: their edges are political and cross the
+# Great Lakes); buffer outward by BUF so perimeter linework is not clipped thin.
 gmt coast ${REGION} -E${STATES} -M -Vq > "${WORK}/states.txt"
+gmt spatial "${WORK}/states.txt" -Sb${BUF} -fg > "${WORK}/mask.txt"
 
-# --- 2. Render ----------------------------------------------------------------
+# --- 2. Border network -> generalized + spline-smoothed -----------------------
+# Dump the WDBII border network (single network -> drawn once, no doubling),
+# lightly simplify to strip river noise, then Akima-spline resample so the
+# remaining curves are smooth (not faceted). Plotted (not -N) for full control.
+gmt coast ${REGION} -N1 -N2 -M -D${RES} -A${AREA} -Vq > "${WORK}/borders.txt"
+gmt simplify "${WORK}/borders.txt" -T${TOL} -fg > "${WORK}/borders_s.txt"
+gmt sample1d "${WORK}/borders_s.txt" -Ar -Fa -T${SPLINE} -fg > "${WORK}/borders_sm.txt"
+
+# --- 3. Render ----------------------------------------------------------------
 # Plot to PostScript, then psconvert with -TG. The modern "png,...,TG" shortcut
 # does NOT yield a real alpha channel in this GMT build, so transparency must be
 # produced explicitly by psconvert (-TG = PNG with transparent background).
 gmt begin "${WORK}/midwest" ps
     gmt set PS_LINE_JOIN round PS_LINE_CAP round PS_MEDIA letter
 
-    # Mask everything to the 13 states (clip = union of the DCW polygons).
-    gmt clip "${WORK}/states.txt" ${REGION} ${PROJ}
+    # Lakes as a self-contained layer, UNMASKED so each Great Lake fills and
+    # outlines to its true shoreline (grey water + thin black outline = bounded,
+    # not floating). -S fills water only; land stays transparent.
+    gmt coast ${REGION} ${PROJ} -D${RES} -A${AREA} -S${LAKEFILL}
+    gmt coast ${REGION} ${PROJ} -D${RES} -A${AREA} -W${LAKEPEN}
 
-        # Political borders, drawn ONLY over land via a nested land clip, so the
-        # mid-lake political lines never appear. -N1 = national (Canada border),
-        # -N2 = state borders. WDBII borders are a single network, so shared
-        # borders are drawn once -> no doubled/ghosted lines.
+    # Political borders: generalized, masked to the 13 states, and drawn ONLY
+    # over land (nested land clip) so mid-lake political lines never appear.
+    gmt clip "${WORK}/mask.txt" ${REGION} ${PROJ}
         gmt coast ${REGION} ${PROJ} -D${RES} -A${AREA} -Gc
-            gmt coast ${REGION} ${PROJ} -D${RES} -A${AREA} -N1/${PEN} -N2/${PEN}
+            gmt plot "${WORK}/borders_sm.txt" ${REGION} ${PROJ} -W${PEN}
         gmt coast ${REGION} ${PROJ} -Q
-
-        # Great Lakes shorelines (only our side shows, since under the state
-        # mask). AREA=5000 keeps only the Great Lakes and drops inland lakes /
-        # Missouri River reservoirs that would otherwise clutter the Dakotas.
-        gmt coast ${REGION} ${PROJ} -D${RES} -A${AREA} -W${PEN}
-
     gmt clip -C
 
-    # Marker: filled black circle at Sportscore Two, drawn on top.
-    echo "${MARK_LON} ${MARK_LAT}" | gmt plot ${REGION} ${PROJ} -Sc${DOT} -Gblack
+    # Bullseye marker: outer ring, middle ring, filled center (drawn last, on top).
+    echo "${MARK_LON} ${MARK_LAT}" | gmt plot ${REGION} ${PROJ} -Sc${B_OUT} -W${RINGPEN}
+    echo "${MARK_LON} ${MARK_LAT}" | gmt plot ${REGION} ${PROJ} -Sc${B_MID} -W${RINGPEN}
+    echo "${MARK_LON} ${MARK_LAT}" | gmt plot ${REGION} ${PROJ} -Sc${B_IN}  -Gblack
 gmt end
 
 # Convert to a transparent, cropped, 300 dpi PNG.
-#   -TG = PNG with transparent background, -A = crop to artwork, -E300 = dpi.
 gmt psconvert "${WORK}/midwest.ps" -TG -A -E300 -D"${OUT}" -Fmidwest
 
 echo "Wrote ${OUT}/midwest.png"
