@@ -1,0 +1,8 @@
+output/
+*.ps
+gmt.history
+gmt.conf
+.DS_Store
+*.swp
+*.swo
+*~
