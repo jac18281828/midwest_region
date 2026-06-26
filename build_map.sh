@@ -3,63 +3,66 @@ set -euo pipefail
 
 OUT=/output
 mkdir -p "${OUT}"
+WORK=/tmp/midwest_work
+mkdir -p "${WORK}"
 
 # 13 ODP Midwest Region state associations, as DCW (ISO) codes.
 STATES="US.IL,US.IN,US.IA,US.KS,US.KY,US.MI,US.MN,US.MO,US.NE,US.ND,US.OH,US.SD,US.WI"
 
-# Bounding box: the union of the 13 states with a little padding.
-WEST=-104.5
-EAST=-80.0
-SOUTH=35.8
-NORTH=49.6
-REGION="-R${WEST}/${EAST}/${SOUTH}/${NORTH}"
+# Bounding box: union of the 13 states with a little padding.
+REGION="-R-104.5/-80.0/35.8/49.6"
 
-# Mercator projection, ~25 cm wide -> ~2950 px wide at 300 dpi (letter-class).
+# Mercator, ~25 cm wide -> ~2950 px at 300 dpi (letter-class).
 PROJ="-JM25c"
 
 # Mercyhealth Sportscore Two, Loves Park, IL (Google place pin: lon lat).
 MARK_LON=-88.9445
 MARK_LAT=42.3220
+DOT=0.4c            # circle diameter; drop to 0.3c only if it touches Wisconsin.
 
-# Generalization tolerance (Douglas-Peucker). 5 km is a good presentation default.
-SIMPLIFY=5k
+# Cartography knobs.
+RES=l              # GSHHG/WDBII resolution: l=low (smooth), i=intermediate.
+AREA=5000          # drop water bodies < this many km^2 (keeps only Great Lakes).
+PEN=2p,black       # border / shoreline pen.
 
-# Line weight for the generalized border.
-PEN=2p,black
-
-WORK=/tmp/midwest_work
-mkdir -p "${WORK}"
-PS="${WORK}/midwest.ps"
-
-# --- Step 1: extract the 13-state borders and generalize them -----------------
-# Dump the DCW state polygons as a multisegment table (-M, no plotting), then
-# simplify (decimate) to remove the fine river/coast meanders that look noisy at
-# this scale. -fg treats coordinates as geographic so -T is in kilometres.
+# --- 1. DCW polygons of the 13 states -> clip mask ----------------------------
+# Dump the state polygons as a multisegment table. We do NOT plot these (their
+# edges are *political*, so they run down the middle of the Great Lakes); we use
+# them only to mask the GSHHG/WDBII linework below to the 13 states.
 gmt coast ${REGION} -E${STATES} -M -Vq > "${WORK}/states.txt"
-gmt simplify "${WORK}/states.txt" -T${SIMPLIFY} -fg > "${WORK}/states_simplified.txt"
 
-# --- Step 2: render via classic PostScript pipeline ---------------------------
-# Round joins/caps make the generalized polyline read smoothly for presentation.
-gmt set PS_MEDIA letter PS_PAGE_ORIENTATION landscape \
-        MAP_ORIGIN_X 1c MAP_ORIGIN_Y 1c \
-        PS_LINE_JOIN round PS_LINE_CAP round
+# --- 2. Render ----------------------------------------------------------------
+# Plot to PostScript, then psconvert with -TG. The modern "png,...,TG" shortcut
+# does NOT yield a real alpha channel in this GMT build, so transparency must be
+# produced explicitly by psconvert (-TG = PNG with transparent background).
+gmt begin "${WORK}/midwest" ps
+    gmt set PS_LINE_JOIN round PS_LINE_CAP round PS_MEDIA letter
 
-# Classic (legacy) GMT mode: write a PostScript file directly.
-# First command opens the PS (-K); last command closes it (-O without -K).
+    # Mask everything to the 13 states (clip = union of the DCW polygons).
+    gmt clip "${WORK}/states.txt" ${REGION} ${PROJ}
 
-# Draw the generalized 13-state outlines from the simplified multisegment file.
-gmt psxy "${WORK}/states_simplified.txt" ${REGION} ${PROJ} \
-    -W${PEN} \
-    -K -P > "${PS}"
+        # Political borders, drawn ONLY over land via a nested land clip, so the
+        # mid-lake political lines never appear. -N1 = national (Canada border),
+        # -N2 = state borders. WDBII borders are a single network, so shared
+        # borders are drawn once -> no doubled/ghosted lines.
+        gmt coast ${REGION} ${PROJ} -D${RES} -A${AREA} -Gc
+            gmt coast ${REGION} ${PROJ} -D${RES} -A${AREA} -N1/${PEN} -N2/${PEN}
+        gmt coast ${REGION} ${PROJ} -Q
 
-# Marker: 0.5 cm black filled circle at Sportscore Two (classic mode uses psxy).
-echo "${MARK_LON} ${MARK_LAT}" | gmt psxy ${REGION} ${PROJ} \
-    -Sc0.5c -Gblack \
-    -O >> "${PS}"
+        # Great Lakes shorelines (only our side shows, since under the state
+        # mask). AREA=5000 keeps only the Great Lakes and drops inland lakes /
+        # Missouri River reservoirs that would otherwise clutter the Dakotas.
+        gmt coast ${REGION} ${PROJ} -D${RES} -A${AREA} -W${PEN}
 
-# Convert PS -> PNG with transparency, cropped to artwork, 300 dpi.
-# -TG = PNG with transparency, -A = crop to artwork bounding box, -E300 = 300 dpi.
-gmt psconvert "${PS}" -TG -A -E300 -D"${OUT}" -F"midwest"
+    gmt clip -C
+
+    # Marker: filled black circle at Sportscore Two, drawn on top.
+    echo "${MARK_LON} ${MARK_LAT}" | gmt plot ${REGION} ${PROJ} -Sc${DOT} -Gblack
+gmt end
+
+# Convert to a transparent, cropped, 300 dpi PNG.
+#   -TG = PNG with transparent background, -A = crop to artwork, -E300 = dpi.
+gmt psconvert "${WORK}/midwest.ps" -TG -A -E300 -D"${OUT}" -Fmidwest
 
 echo "Wrote ${OUT}/midwest.png"
 ls -l "${OUT}/midwest.png"
